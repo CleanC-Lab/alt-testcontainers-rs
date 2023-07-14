@@ -3,7 +3,7 @@ use crate::{
     Image, RunnableImage,
 };
 use bollard_stubs::models::ContainerInspectResponse;
-use std::{fmt, marker::PhantomData, net::IpAddr, str::FromStr};
+use std::{fmt, net::IpAddr, str::FromStr};
 
 /// Represents a running docker container.
 ///
@@ -23,19 +23,16 @@ use std::{fmt, marker::PhantomData, net::IpAddr, str::FromStr};
 /// }
 ///
 /// ```
-///
 /// [drop_impl]: struct.Container.html#impl-Drop
-pub struct Container<'d, I: Image> {
+pub struct Container<I: Image> {
     id: String,
     docker_client: Box<dyn Docker>,
     image: RunnableImage<I>,
     command: Command,
     ports: Ports,
-    /// Tracks the lifetime of the client to make sure the container is dropped before the client.
-    client_lifetime: PhantomData<&'d ()>,
 }
 
-impl<'d, I> fmt::Debug for Container<'d, I>
+impl<I> fmt::Debug for Container<I>
 where
     I: fmt::Debug + Image,
 {
@@ -48,7 +45,7 @@ where
     }
 }
 
-impl<'d, I> Container<'d, I>
+impl<I> Container<I>
 where
     I: Image,
 {
@@ -70,7 +67,6 @@ where
             image,
             command,
             ports,
-            client_lifetime: PhantomData,
         }
     }
 
@@ -96,7 +92,7 @@ where
     }
 }
 
-impl<'d, I> Container<'d, I>
+impl<I> Container<I>
 where
     I: Image,
 {
@@ -219,7 +215,7 @@ where
 ///
 /// Setting it to `keep` will stop container.
 /// Setting it to `remove` will remove it.
-impl<'d, I> Drop for Container<'d, I>
+impl<I> Drop for Container<I>
 where
     I: Image,
 {
@@ -237,7 +233,7 @@ where
 ///
 /// This trait is pub(crate) because it should not be used directly by users but only represents an internal abstraction that allows containers to be generic over the client they have been started with.
 /// All functionality of this trait is available on [`Container`]s directly.
-pub(crate) trait Docker {
+pub(crate) trait Docker: Sync + Send {
     fn stdout_logs(&self, id: &str) -> LogStream;
     fn stderr_logs(&self, id: &str) -> LogStream;
     fn ports(&self, id: &str) -> Ports;
@@ -247,4 +243,18 @@ pub(crate) trait Docker {
     fn start(&self, id: &str);
     fn exec(&self, id: &str, cmd: String);
     fn block_until_ready(&self, id: &str, ready_conditions: Vec<WaitFor>);
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::Container;
+    use crate::images::hello_world::HelloWorld;
+
+    #[test]
+    fn container_should_be_send_and_sync() {
+        assert_send_and_sync::<Container<HelloWorld>>();
+    }
+
+    fn assert_send_and_sync<T: Send + Sync>() {}
 }

@@ -163,6 +163,8 @@ pub struct RunnableImage<I: Image> {
     env_vars: BTreeMap<String, String>,
     volumes: BTreeMap<String, String>,
     ports: Option<Vec<Port>>,
+    privileged: bool,
+    shm_size: Option<u64>,
 }
 
 impl<I: Image> RunnableImage<I> {
@@ -192,6 +194,15 @@ impl<I: Image> RunnableImage<I> {
 
     pub fn ports(&self) -> &Option<Vec<Port>> {
         &self.ports
+    }
+
+    pub fn privileged(&self) -> bool {
+        self.privileged
+    }
+
+    /// Shared memory size in bytes
+    pub fn shm_size(&self) -> Option<u64> {
+        self.shm_size
     }
 
     pub fn entrypoint(&self) -> Option<String> {
@@ -264,6 +275,17 @@ impl<I: Image> RunnableImage<I> {
             ..self
         }
     }
+
+    pub fn with_privileged(self, privileged: bool) -> Self {
+        Self { privileged, ..self }
+    }
+
+    pub fn with_shm_size(self, bytes: u64) -> Self {
+        Self {
+            shm_size: Some(bytes),
+            ..self
+        }
+    }
 }
 
 impl<I> From<I> for RunnableImage<I>
@@ -287,19 +309,21 @@ impl<I: Image> From<(I, I::Args)> for RunnableImage<I> {
             env_vars: BTreeMap::default(),
             volumes: BTreeMap::default(),
             ports: None,
+            privileged: false,
+            shm_size: None,
         }
     }
 }
 
 /// Represents a port mapping between a local port and the internal port of a container.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Port {
     pub local: u16,
     pub internal: u16,
 }
 
 /// Represents a condition that needs to be met before a container is considered ready.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum WaitFor {
     /// An empty condition. Useful for default cases or fallbacks.
     Nothing,

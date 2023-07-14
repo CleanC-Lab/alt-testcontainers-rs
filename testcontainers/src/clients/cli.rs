@@ -24,7 +24,7 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn run<I: Image>(&self, image: impl Into<RunnableImage<I>>) -> Container<'_, I> {
+    pub fn run<I: Image>(&self, image: impl Into<RunnableImage<I>>) -> Container<I> {
         let image = image.into();
 
         if let Some(network) = image.network() {
@@ -143,6 +143,14 @@ impl Client {
     fn build_run_command<I: Image>(image: &RunnableImage<I>, mut command: Command) -> Command {
         command.arg("run");
 
+        if image.privileged() {
+            command.arg("--privileged");
+        }
+
+        if let Some(bytes) = image.shm_size() {
+            command.arg(format!("--shm-size={}", bytes));
+        }
+
         if let Some(network) = image.network() {
             command.arg(format!("--network={}", network));
         }
@@ -196,7 +204,7 @@ impl Client {
         }
 
         let mut docker = self.command();
-        docker.args(&["network", "create", name]);
+        docker.args(["network", "create", name]);
 
         let output = docker.output().expect("failed to create docker network");
         assert!(output.status.success(), "failed to create docker network");
@@ -206,7 +214,7 @@ impl Client {
 
     fn network_exists(&self, name: &str) -> bool {
         let mut docker = self.command();
-        docker.args(&["network", "ls", "--format", "{{.Name}}"]);
+        docker.args(["network", "ls", "--format", "{{.Name}}"]);
 
         let output = docker.output().expect("failed to list docker networks");
         let output = String::from_utf8(output.stdout).expect("output is not valid utf-8");
@@ -220,7 +228,7 @@ impl Client {
         S: AsRef<OsStr>,
     {
         let mut docker = self.command();
-        docker.args(&["network", "rm"]);
+        docker.args(["network", "rm"]);
         docker.args(networks);
 
         let output = docker.output().expect("failed to delete docker networks");
@@ -596,6 +604,30 @@ mod tests {
         assert_eq!(
             format!("{:?}", command),
             r#""docker" "run" "--network=container:the_other_one" "--name=hello_container" "-d" "hello:0.0""#
+        );
+    }
+
+    #[test]
+    fn cli_run_command_should_include_privileged() {
+        let image = GenericImage::new("hello", "0.0");
+        let image = RunnableImage::from(image).with_privileged(true);
+        let command = Client::build_run_command(&image, Command::new("docker"));
+
+        assert_eq!(
+            format!("{:?}", command),
+            r#""docker" "run" "--privileged" "-P" "-d" "hello:0.0""#
+        );
+    }
+
+    #[test]
+    fn cli_run_command_should_include_shm_size() {
+        let image = GenericImage::new("hello", "0.0");
+        let image = RunnableImage::from(image).with_shm_size(1_000_000);
+        let command = Client::build_run_command(&image, Command::new("docker"));
+
+        assert_eq!(
+            format!("{:?}", command),
+            r#""docker" "run" "--shm-size=1000000" "-P" "-d" "hello:0.0""#
         );
     }
 

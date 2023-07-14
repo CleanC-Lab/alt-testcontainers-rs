@@ -47,7 +47,7 @@ impl Default for Http {
 
 // public API
 impl Http {
-    pub async fn run<I: Image>(&self, image: impl Into<RunnableImage<I>>) -> ContainerAsync<'_, I> {
+    pub async fn run<I: Image>(&self, image: impl Into<RunnableImage<I>>) -> ContainerAsync<I> {
         let image = image.into();
         let mut create_options: Option<CreateContainerOptions<String>> = None;
         let mut config: Config<String> = Config {
@@ -56,7 +56,15 @@ impl Http {
             ..Default::default()
         };
 
-        // Create network and add it to container creation
+        // shared memory
+        if let Some(bytes) = image.shm_size() {
+            config.host_config = config.host_config.map(|mut host_config| {
+                host_config.shm_size = Some(bytes as i64);
+                host_config
+            });
+        }
+
+        // create network and add it to container creation
         if let Some(network) = image.network() {
             config.host_config = config.host_config.map(|mut host_config| {
                 host_config.network_mode = Some(network.to_string());
@@ -145,10 +153,12 @@ impl Http {
         let create_result = self
             .create_container(create_options.clone(), config.clone())
             .await;
-        let id = {
+        let container_id = {
             match create_result {
                 Ok(container) => container.id,
-                Err(bollard::errors::Error::DockerResponseNotFoundError { message: _ }) => {
+                Err(bollard::errors::Error::DockerResponseServerError {
+                    status_code: 404, ..
+                }) => {
                     {
                         let pull_options = Some(CreateImageOptions {
                             from_image: image.descriptor(),
@@ -172,12 +182,12 @@ impl Http {
 
         #[cfg(feature = "watchdog")]
         if self.inner.command == env::Command::Remove {
-            crate::watchdog::Watchdog::register(container_id.clone());
+            crate::watchdog::register(container_id.clone());
         }
 
         self.inner
             .bollard
-            .start_container::<String>(&id, None)
+            .start_container::<String>(&container_id, None)
             .await
             .unwrap();
 
@@ -185,7 +195,7 @@ impl Http {
             inner: self.inner.clone(),
         };
 
-        ContainerAsync::new(id, client, image, self.inner.command).await
+        ContainerAsync::new(container_id, client, image, self.inner.command).await
     }
 }
 
@@ -434,5 +444,18 @@ mod tests {
 
         // client has been dropped, should clean up networks
         assert!(!network_exists(&client, "awesome-net-2").await)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn http_run_command_should_set_shared_memory_size() {
+        let docker = Http::new();
+        let image = GenericImage::new("hello-world", "latest");
+        let image = RunnableImage::from(image).with_shm_size(1_000_000);
+        let container = docker.run(image).await;
+
+        let container_details = inspect(&docker.inner.bollard, container.id()).await;
+        let shm_size = container_details.host_config.unwrap().shm_size.unwrap();
+
+        assert_eq!(shm_size, 1_000_000);
     }
 }
